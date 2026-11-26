@@ -19,12 +19,34 @@ except Exception:
 # =========================================================
 
 app = Flask(__name__)
-app.secret_key = "change_moi"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "caisse_concours_tickets.db")
 PASSWORD_FILE = os.path.join(BASE_DIR, "password.txt")
 BACKUP_DIR = os.path.join(BASE_DIR, "backup")
+
+def charger_cle_secrete():
+    """Clé secrète propre à chaque caisse, créée au premier démarrage (jamais dans le dépôt Git)."""
+    import secrets
+    chemin = os.path.join(BASE_DIR, "secret_key.txt")
+    try:
+        with open(chemin, encoding="utf-8") as f:
+            cle = f.read().strip()
+        if len(cle) >= 32:
+            return cle
+    except OSError:
+        pass
+    cle = secrets.token_hex(32)
+    with open(chemin, "w", encoding="utf-8") as f:
+        f.write(cle)
+    try:
+        os.chmod(chemin, 0o600)
+    except OSError:
+        pass
+    return cle
+
+
+app.secret_key = charger_cle_secrete()
 
 POS_VENDOR_ID = 0x0416
 POS_PRODUCT_ID = 0x5011
