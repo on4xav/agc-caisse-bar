@@ -13,6 +13,7 @@ Caisse tactile (Flask) pour le bar des concours de tir, prévue pour un POS Posi
 - **Tiroir-caisse** : ouverture automatique aux paiements en espèces (module USB, port COM ou imprimante), activable OUI / NON
 - Accès maintenance par **pavé numérique**, entrées / sorties imprimées sur le journal
 - Le RESET de l'historique remet la numérotation des ventes à 1
+- Mise à jour depuis GitHub en un bouton dans la configuration
 - Sauvegarde automatique de la base dans `backup/`
 
 ## Fichiers
@@ -56,15 +57,22 @@ La bonne réponse est enregistrée directement dans la caisse.
 
 ## Mise à jour
 
+**Depuis la caisse** (à partir de la version 1.2.0) : Config → **🔄 Mise à jour** → **Vérifier les mises à jour**.
+Si une nouvelle version existe, la liste des changements s'affiche ; **Installer et redémarrer la caisse**
+la télécharge, relance le programme et la fenêtre se recharge toute seule. Le bouton **⟳ Redémarrer le POS**
+redémarre l'ordinateur complet.
+
+**À la main** :
+
 ```bash
 cd ~/caisse_bar
 git pull
 pkill -f caisse_bar.py
 ```
 
-Puis relancer avec l'icône **Caisse bar**.
-La version installée s'affiche en haut à droite de la page **Config** et sur le ticket de fin de service. Les ventes et le code ne sont pas touchés
+Puis relancer avec l'icône **Caisse bar**. Les ventes et le code ne sont pas touchés
 (ils ne sont pas dans le dépôt).
+La version installée s'affiche en haut à droite de la page **Config** et sur le ticket de fin de service.
 
 ## Premier démarrage
 
