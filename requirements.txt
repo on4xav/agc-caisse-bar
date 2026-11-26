@@ -1,0 +1,4 @@
+flask
+python-escpos
+pyusb
+pyserial

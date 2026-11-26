@@ -1,0 +1,10 @@
+# Données propres à chaque caisse : ne jamais les publier
+caisse_concours_tickets.db
+password.txt
+backup/
+*.log
+
+# Environnement Python
+venv/
+__pycache__/
+*.pyc
