@@ -62,7 +62,8 @@ git pull
 pkill -f caisse_bar.py
 ```
 
-Puis relancer avec l'icône **Caisse bar**. Les ventes et le code ne sont pas touchés
+Puis relancer avec l'icône **Caisse bar**.
+La version installée s'affiche en haut à droite de la page **Config** et sur le ticket de fin de service. Les ventes et le code ne sont pas touchés
 (ils ne sont pas dans le dépôt).
 
 ## Premier démarrage

@@ -18,6 +18,8 @@ except Exception:
 # CONFIG
 # =========================================================
 
+VERSION = "1.1.0"          # à augmenter à chaque mise à jour publiée sur GitHub
+
 app = Flask(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -441,6 +443,7 @@ def _imprimer_bilan(printer, r):
 
     printer.set(align="center", bold=False, width=1, height=1)
     p("CONCOURS TIR\n")
+    p(f"Caisse bar v{VERSION}\n")
     p(datetime.now().strftime("%d/%m/%Y %H:%M:%S") + "\n")
     p(sep)
 
@@ -1342,7 +1345,7 @@ def config():
     autre = "ARGENT" if mode == "TICKETS" else "TICKETS"
     return render_template_string("""
     {{ style|safe }}
-    <header>CONFIGURATION</header>
+    <header>CONFIGURATION<span style="position:absolute;right:20px;top:50%;transform:translateY(-50%);font-size:18px;font-weight:normal;color:#aaa;">version {{ version }}</span></header>
     <div style="padding:20px;text-align:center;">
         <div class="card">
             <h2>Mode de la caisse : <span style="color:{{ '#f1c40f' if mode == 'ARGENT' else '#00ff66' }};">{{ mode }}</span></h2>
@@ -1426,7 +1429,7 @@ def config():
             </script>
         </div>
     </div>
-    """, style=STYLE, mode=mode, autre=autre,
+    """, style=STYLE, version=VERSION, mode=mode, autre=autre,
         carte=option_active("pay_carte"), payconiq=option_active("pay_payconiq"),
         journal=journal_actif(), erreur_journal=ERREUR_JOURNAL["texte"],
         fond=get_fond_caisse(), r=resume_ventes(),
@@ -1912,6 +1915,7 @@ def reset():
 # =========================================================
 
 if __name__ == "__main__":
+    print(f"Caisse bar version {VERSION}")
     init_db()
     try:
         preparer_profil_firefox()
