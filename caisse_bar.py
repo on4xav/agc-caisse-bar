@@ -18,7 +18,7 @@ except Exception:
 # CONFIG
 # =========================================================
 
-VERSION = "1.2.0"          # à augmenter à chaque mise à jour publiée sur GitHub
+VERSION = "1.2.1"          # à augmenter à chaque mise à jour publiée sur GitHub
 
 app = Flask(__name__)
 
