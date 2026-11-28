@@ -921,7 +921,7 @@ def index():
     {% if alerte_imprimante %}
     <div style="position:fixed;bottom:12px;left:12px;z-index:40;background:#c0392b;color:white;font-size:20px;font-weight:bold;padding:10px 18px;border-radius:12px;">⚠ Imprimante journal : erreur</div>
     {% endif %}
-    <header class="{{ 'argent' if mode == 'ARGENT' else '' }}">CAISSE CONCOURS TIR - MODE {{ mode }}<a class="config-link" href="/login">⚙ Config</a></header>
+    <header class="{{ 'argent' if mode == 'ARGENT' else '' }}"><span style="position:absolute;left:20px;top:50%;transform:translateY(-50%);font-size:18px;font-weight:normal;color:#aaa;">v{{ version }}</span>CAISSE CONCOURS TIR - MODE {{ mode }}<a class="config-link" href="/login">⚙ Config</a></header>
     <div class="container">
         <div class="articles">
             {% for a in articles %}
@@ -1017,7 +1017,7 @@ def index():
     }
     </script>
     """, style=STYLE, articles=articles, panier=panier, total=total, totaux_jetons=totaux_jetons,
-        derniere=derniere, mode=mode, billets=BILLETS,
+        derniere=derniere, mode=mode, billets=BILLETS, version=VERSION,
         carte=option_active("pay_carte"), payconiq=option_active("pay_payconiq"),
         alerte_imprimante=(mode == "ARGENT" and journal_actif() and bool(ERREUR_JOURNAL["texte"])))
 
