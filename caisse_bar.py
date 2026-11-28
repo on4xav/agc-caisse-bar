@@ -18,7 +18,7 @@ except Exception:
 # CONFIG
 # =========================================================
 
-VERSION = "1.2.1"          # à augmenter à chaque mise à jour publiée sur GitHub
+VERSION = "1.3.0"          # à augmenter à chaque mise à jour publiée sur GitHub
 
 app = Flask(__name__)
 
@@ -98,12 +98,12 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT,
             total INTEGER,
-            paiement TEXT DEFAULT 'TICKETS',
+            paiement TEXT DEFAULT 'JETONS',
             recu INTEGER DEFAULT 0,
             rendu INTEGER DEFAULT 0,
             operateur TEXT DEFAULT '',
             annulee INTEGER DEFAULT 0,
-            mode TEXT DEFAULT 'TICKETS'
+            mode TEXT DEFAULT 'JETONS'
         )
     """)
 
@@ -132,12 +132,12 @@ def init_db():
         ("articles", "jetons_rouges", "ALTER TABLE articles ADD COLUMN jetons_rouges INTEGER DEFAULT 0"),
         ("articles", "jetons_bleus", "ALTER TABLE articles ADD COLUMN jetons_bleus INTEGER DEFAULT 0"),
         ("articles", "prix_euro", "ALTER TABLE articles ADD COLUMN prix_euro INTEGER DEFAULT 0"),
-        ("ventes", "paiement", "ALTER TABLE ventes ADD COLUMN paiement TEXT DEFAULT 'TICKETS'"),
+        ("ventes", "paiement", "ALTER TABLE ventes ADD COLUMN paiement TEXT DEFAULT 'JETONS'"),
         ("ventes", "recu", "ALTER TABLE ventes ADD COLUMN recu INTEGER DEFAULT 0"),
         ("ventes", "rendu", "ALTER TABLE ventes ADD COLUMN rendu INTEGER DEFAULT 0"),
         ("ventes", "operateur", "ALTER TABLE ventes ADD COLUMN operateur TEXT DEFAULT ''"),
         ("ventes", "annulee", "ALTER TABLE ventes ADD COLUMN annulee INTEGER DEFAULT 0"),
-        ("ventes", "mode", "ALTER TABLE ventes ADD COLUMN mode TEXT DEFAULT 'TICKETS'"),
+        ("ventes", "mode", "ALTER TABLE ventes ADD COLUMN mode TEXT DEFAULT 'JETONS'"),
         ("lignes_vente", "quantite", "ALTER TABLE lignes_vente ADD COLUMN quantite INTEGER DEFAULT 1"),
         ("lignes_vente", "jetons_rouges", "ALTER TABLE lignes_vente ADD COLUMN jetons_rouges INTEGER DEFAULT 0"),
         ("lignes_vente", "jetons_bleus", "ALTER TABLE lignes_vente ADD COLUMN jetons_bleus INTEGER DEFAULT 0"),
@@ -150,16 +150,22 @@ def init_db():
         except Exception as e:
             print("Erreur migration", table, col, ":", e)
 
+    # Ancien mode TICKETS -> mode JETONS (le prix en jetons = rouges + bleus)
+    cur.execute("UPDATE ventes SET mode = 'JETONS' WHERE mode = 'TICKETS'")
+    cur.execute("UPDATE ventes SET paiement = 'JETONS' WHERE paiement = 'TICKETS'")
+    cur.execute("UPDATE parametres SET valeur = 'JETONS' WHERE cle = 'mode' AND valeur = 'TICKETS'")
+    cur.execute("UPDATE articles SET prix = COALESCE(jetons_rouges, 0) + COALESCE(jetons_bleus, 0)")
+
     cur.execute("SELECT COUNT(*) FROM articles")
     if cur.fetchone()[0] == 0:
         articles = [
-            # nom, tickets, catégorie, couleur, rouges, bleus, prix en centimes
+            # nom, jetons (rouges + bleus), catégorie, couleur, rouges, bleus, prix en centimes
             ("Café", 1, "Boissons", "#2d89ef", 1, 0, 150),
             ("Eau", 1, "Boissons", "#3498db", 0, 1, 150),
             ("Soft", 2, "Boissons", "#2980b9", 1, 1, 200),
             ("Pain saucisse", 4, "Nourriture", "#e67e22", 2, 2, 400),
             ("Sandwich", 3, "Nourriture", "#d35400", 2, 1, 350),
-            ("Ticket repas", 10, "Repas", "#27ae60", 5, 5, 1500),
+            ("Repas", 10, "Repas", "#27ae60", 5, 5, 1500),
         ]
         cur.executemany("""
             INSERT INTO articles (nom, prix, categorie, couleur, jetons_rouges, jetons_bleus, prix_euro)
@@ -188,8 +194,8 @@ def set_param(cle, valeur):
 
 
 def get_mode():
-    mode = get_param("mode", "TICKETS")
-    return mode if mode in ("TICKETS", "ARGENT") else "TICKETS"
+    mode = get_param("mode", "JETONS")
+    return mode if mode in ("JETONS", "ARGENT") else "JETONS"
 
 
 # Moyens de paiement électroniques activables (les espèces sont toujours actives)
@@ -213,7 +219,8 @@ def get_fond_caisse():
 # =========================================================
 # FORMATAGE MONTANTS
 # =========================================================
-# En mode TICKETS, les montants sont des nombres de tickets.
+# En mode JETONS, le client paie en jetons rouges et bleus ; les montants
+# stockés sont le nombre total de jetons (rouges + bleus).
 # En mode ARGENT, les montants sont stockés en CENTIMES (150 = 1,50 €).
 
 def euros(centimes):
@@ -221,11 +228,13 @@ def euros(centimes):
 
 
 @app.template_filter("montant")
-def fmt_montant(valeur, mode="TICKETS"):
+def fmt_montant(valeur, mode="JETONS", rouges=None, bleus=None):
     v = int(valeur or 0)
     if mode == "ARGENT":
         return euros(v)
-    return f"{v} ticket{'s' if v > 1 else ''}"
+    if rouges is not None and bleus is not None:
+        return f"🔴 {int(rouges or 0)}  🔵 {int(bleus or 0)}"
+    return f"{v} jeton{'s' if v > 1 else ''}"
 
 
 @app.template_filter("euros_input")
@@ -241,12 +250,14 @@ def parse_euros(texte):
         return 0
 
 
-def montant_txt(valeur, mode):
+def montant_txt(valeur, mode, rouges=None, bleus=None):
     """Version imprimante thermique (pas de symbole €)."""
     v = int(valeur or 0)
     if mode == "ARGENT":
         return f"{v / 100:.2f} EUR".replace(".", ",")
-    return f"{v} T"
+    if rouges is not None and bleus is not None:
+        return f"{int(rouges or 0)}R {int(bleus or 0)}B"
+    return f"{v} J"
 
 
 def sans_accents(texte):
@@ -288,16 +299,25 @@ def backup_db():
 def resume_ventes():
     conn = db()
 
-    par_mode = conn.execute("""
-        SELECT mode, COUNT(*) AS nb, COALESCE(SUM(total), 0) AS total
-        FROM ventes WHERE annulee = 0
-        GROUP BY mode ORDER BY mode DESC
+    jetons_vente = """
+        LEFT JOIN (SELECT vente_id,
+                          SUM(jetons_rouges * quantite) AS r,
+                          SUM(jetons_bleus * quantite) AS b
+                   FROM lignes_vente GROUP BY vente_id) j ON j.vente_id = v.id
+    """
+
+    par_mode = conn.execute(f"""
+        SELECT v.mode, COUNT(*) AS nb, COALESCE(SUM(v.total), 0) AS total,
+               COALESCE(SUM(j.r), 0) AS rouges, COALESCE(SUM(j.b), 0) AS bleus
+        FROM ventes v {jetons_vente} WHERE v.annulee = 0
+        GROUP BY v.mode ORDER BY v.mode DESC
     """).fetchall()
 
-    par_paiement = conn.execute("""
-        SELECT mode, paiement, COUNT(*) AS nb, COALESCE(SUM(total), 0) AS total
-        FROM ventes WHERE annulee = 0
-        GROUP BY mode, paiement ORDER BY mode DESC, paiement
+    par_paiement = conn.execute(f"""
+        SELECT v.mode, v.paiement, COUNT(*) AS nb, COALESCE(SUM(v.total), 0) AS total,
+               COALESCE(SUM(j.r), 0) AS rouges, COALESCE(SUM(j.b), 0) AS bleus
+        FROM ventes v {jetons_vente} WHERE v.annulee = 0
+        GROUP BY v.mode, v.paiement ORDER BY v.mode DESC, v.paiement
     """).fetchall()
 
     jetons = conn.execute("""
@@ -456,7 +476,7 @@ def _imprimer_bilan(printer, r):
         p(f"MODE {mode}\n")
         printer.set(bold=False)
         p(f"Nombre ventes : {m['nb']}\n")
-        p(f"Total : {montant_txt(m['total'], mode)}\n")
+        p(f"Total : {montant_txt(m['total'], mode, m['rouges'], m['bleus'])}\n")
 
         if mode == "ARGENT":
             for pp in r["par_paiement"]:
@@ -469,7 +489,7 @@ def _imprimer_bilan(printer, r):
             if a["mode"] == mode:
                 nom = sans_accents(a["article"])[:14]
                 quantite = int(a["quantite"] or 0)
-                p(f"{nom:<14} x{quantite:<3} {montant_txt(a['total'], mode):>11}\n")
+                p(f"{nom:<14} x{quantite:<3} {montant_txt(a['total'], mode, a['rouges'], a['bleus']):>11}\n")
         p(sep)
 
     if r["argent_utilise"]:
@@ -493,7 +513,7 @@ def _imprimer_bilan(printer, r):
 
     for m in r["par_mode"]:
         printer.set(align="center", bold=True, width=1, height=2)
-        p(f"TOTAL {m['mode']} : {montant_txt(m['total'], m['mode'])}\n")
+        p(f"TOTAL {m['mode']} : {montant_txt(m['total'], m['mode'], m['rouges'], m['bleus'])}\n")
 
     printer.set(align="center", bold=False, width=1, height=1)
     p("\n\n\n")
@@ -913,9 +933,9 @@ def index():
     {{ style|safe }}
     {% if derniere %}
     <div class="flash {% if derniere.rendu %}flash-long{% endif %}">
-        ✔ Vente n° {{ derniere.id }} — {{ derniere.total|montant(derniere.mode) }}{% if derniere.paiement in ('CARTE', 'PAYCONIQ') %} ({{ derniere.paiement|lower }}){% endif %}<br>
+        ✔ Vente n° {{ derniere.id }} — {{ derniere.total|montant(derniere.mode, derniere.rouges, derniere.bleus) }}{% if derniere.paiement in ('CARTE', 'PAYCONIQ') %} ({{ derniere.paiement|lower }}){% endif %}<br>
         {% if derniere.rendu %}<span class="rendu">À RENDRE : {{ derniere.rendu|montant('ARGENT') }}</span><br>{% endif %}
-        <span style="font-size:26px;">🔴 {{ derniere.rouges }} &nbsp; 🔵 {{ derniere.bleus }}</span>
+        {% if derniere.mode == 'ARGENT' %}<span style="font-size:26px;">🔴 {{ derniere.rouges }} &nbsp; 🔵 {{ derniere.bleus }}</span>{% endif %}
     </div>
     {% endif %}
     {% if alerte_imprimante %}
@@ -929,10 +949,11 @@ def index():
                 <input type="hidden" name="id" value="{{ a.id }}">
                 <button class="article-btn" type="submit" style="background:{{ a.couleur }};">
                     {{ a.nom }}<br>
-                    {% if mode == 'ARGENT' %}💶 {{ a.prix_euro|montant('ARGENT') }}{% else %}🎟️ {{ a.prix|montant('TICKETS') }}{% endif %}
+                    {% if mode == 'ARGENT' %}💶 {{ a.prix_euro|montant('ARGENT') }}
                     <div class="article-sub">
                         🔴 x{{ a.jetons_rouges }} | 🔵 x{{ a.jetons_bleus }}
                     </div>
+                    {% else %}{{ a.prix|montant('JETONS', a.jetons_rouges, a.jetons_bleus) }}{% endif %}
                 </button>
             </form>
             {% endfor %}
@@ -947,20 +968,25 @@ def index():
                     <a class="qty-btn" href="/moins/{{ loop.index0 }}">−</a>
                     <div style="text-align:center;">x{{ item.quantite }}</div>
                     <a class="qty-btn" href="/plus/{{ loop.index0 }}">+</a>
-                    <div style="text-align:right;">{{ (item.prix * item.quantite)|montant(mode) }}</div>
+                    <div style="text-align:right;">{{ (item.prix * item.quantite)|montant(mode, item.jetons_rouges * item.quantite, item.jetons_bleus * item.quantite) }}</div>
                 </div>
+                {% if mode == 'ARGENT' %}
                 <div class="panier-jetons">
                     Jetons unitaires : <span class="jeton-r">🔴 x{{ item.jetons_rouges }}</span> | <span class="jeton-b">🔵 x{{ item.jetons_bleus }}</span>
                 </div>
+                {% endif %}
                 {% endfor %}
             </div>
 
+            {% if mode == 'ARGENT' %}
             <div class="total-jetons-box">
                 <span>Total Rouges : <span class="jeton-r">{{ totaux_jetons.rouges }}</span></span>
                 <span>Total Bleus : <span class="jeton-b">{{ totaux_jetons.bleus }}</span></span>
             </div>
-
             <div class="total">Total : {{ total|montant(mode) }}</div>
+            {% else %}
+            <div class="total">Total : <span class="jeton-r">🔴 {{ totaux_jetons.rouges }}</span> &nbsp; <span class="jeton-b">🔵 {{ totaux_jetons.bleus }}</span></div>
+            {% endif %}
 
             <div class="actions">
                 <button type="button" class="btn btn-valider" {% if not panier %}disabled{% endif %} onclick="valider(this)">✔ VALIDER</button>
@@ -999,7 +1025,7 @@ def index():
         }
         b.disabled = true;
         b.textContent = "Enregistrement…";
-        location.href = "/valider_ticket";
+        location.href = "/valider_jetons";
     }
     function fermerPaiement() {
         document.getElementById("paiement").style.display = "none";
@@ -1028,7 +1054,10 @@ def add():
     a = conn.execute("SELECT * FROM articles WHERE id = ?", (request.form.get("id"),)).fetchone()
     conn.close()
     if a:
-        prix = a["prix_euro"] if mode == "ARGENT" else a["prix"]
+        if mode == "ARGENT":
+            prix = a["prix_euro"]
+        else:
+            prix = (a["jetons_rouges"] or 0) + (a["jetons_bleus"] or 0)
         add_to_panier(a["nom"], prix or 0, a["jetons_rouges"] or 0, a["jetons_bleus"] or 0, mode)
     return redirect(url_for("index"))
 
@@ -1069,7 +1098,7 @@ def clear():
 # VENTES / PAIEMENT
 # =========================================================
 
-def enregistrer_vente(paiement, recu=0, rendu=0, operateur="", mode="TICKETS"):
+def enregistrer_vente(paiement, recu=0, rendu=0, operateur="", mode="JETONS"):
     panier = get_panier()
     if not panier:
         return None
@@ -1092,20 +1121,20 @@ def enregistrer_vente(paiement, recu=0, rendu=0, operateur="", mode="TICKETS"):
     backup_db()
     return vente_id
 
-@app.route("/valider_ticket")
-def valider_ticket():
+@app.route("/valider_jetons")
+def valider_jetons():
     mode = get_mode()
     panier = panier_du_mode(mode)
-    if not panier or mode != "TICKETS":
+    if not panier or mode != "JETONS":
         return redirect(url_for("index"))
 
     total = panier_total(panier)
     jetons = panier_total_jetons(panier)
-    vente_id = enregistrer_vente("TICKETS", recu=total, rendu=0, operateur="", mode="TICKETS")
+    vente_id = enregistrer_vente("JETONS", recu=total, rendu=0, operateur="", mode="JETONS")
     session["derniere_vente"] = {
         "id": vente_id,
-        "mode": "TICKETS",
-        "paiement": "TICKETS",
+        "mode": "JETONS",
+        "paiement": "JETONS",
         "total": total,
         "rendu": 0,
         "rouges": jetons["rouges"],
@@ -1183,18 +1212,22 @@ def ticket(vente_id):
         {% for l in lignes %}
         <div style="display:flex;justify-content:space-between;font-size:22px;margin-bottom:2px;">
             <span>{{ l.article }} x{{ l.quantite }}</span>
-            <span>{{ (l.prix * l.quantite)|montant(vente.mode) }}</span>
+            <span>{{ (l.prix * l.quantite)|montant(vente.mode, l.jetons_rouges * l.quantite, l.jetons_bleus * l.quantite) }}</span>
         </div>
+        {% if vente.mode == 'ARGENT' %}
         <div style="font-size:16px;color:#aaa;margin-bottom:8px;">
             Détail : 🔴 x{{ l.jetons_rouges * l.quantite }} | 🔵 x{{ l.jetons_bleus * l.quantite }}
         </div>
+        {% endif %}
         {% endfor %}
         <hr>
+        {% if vente.mode == 'ARGENT' %}
         <div style="font-size: 22px; text-align:right; margin-bottom: 10px;">
             Total Rouges : <span class="jeton-r">{{ total_r }}</span><br>
             Total Bleus : <span class="jeton-b">{{ total_b }}</span>
         </div>
-        <h2 style="text-align:right;">Total : {{ vente.total|montant(vente.mode) }}</h2>
+        {% endif %}
+        <h2 style="text-align:right;">Total : {{ vente.total|montant(vente.mode, total_r, total_b) }}</h2>
         <p>Paiement : {{ vente.paiement }}</p>
         {% if vente.paiement == 'ESPECES' %}
         <p>Reçu : {{ vente.recu|montant('ARGENT') }} — Rendu : {{ vente.rendu|montant('ARGENT') }}</p>
@@ -1228,17 +1261,19 @@ def client():
             {% for item in panier %}
             <div style="display:flex;justify-content:space-between;border-bottom:1px solid #444;padding:12px;">
                 <span>{{ item.nom }} x{{ item.quantite }}</span>
-                <span>{{ (item.prix * item.quantite)|montant(mode) }}</span>
+                <span>{{ (item.prix * item.quantite)|montant(mode, item.jetons_rouges * item.quantite, item.jetons_bleus * item.quantite) }}</span>
             </div>
             {% endfor %}
         </div>
 
+        {% if mode == 'ARGENT' %}
         <div style="margin-top:30px; display:flex; justify-content:center; gap:50px; font-size:28px;">
             <div>Jetons Rouges : <span class="jeton-r">{{ totaux_jetons.rouges }}</span></div>
             <div>Jetons Bleus : <span class="jeton-b">{{ totaux_jetons.bleus }}</span></div>
         </div>
+        {% endif %}
 
-        <div style="margin-top:40px;"><div>Total à payer</div><div class="big-number">{{ total|montant(mode) }}</div></div>
+        <div style="margin-top:40px;"><div>Total à payer</div><div class="big-number">{{ total|montant(mode, totaux_jetons.rouges, totaux_jetons.bleus) }}</div></div>
     </div>
     """, style=STYLE, panier=panier, total=total, totaux_jetons=totaux_jetons, mode=mode)
 
@@ -1342,7 +1377,7 @@ def config():
     if not admin_required():
         return redirect(url_for("login"))
     mode = get_mode()
-    autre = "ARGENT" if mode == "TICKETS" else "TICKETS"
+    autre = "ARGENT" if mode == "JETONS" else "JETONS"
     return render_template_string("""
     {{ style|safe }}
     <header>CONFIGURATION<span style="position:absolute;right:20px;top:50%;transform:translateY(-50%);font-size:18px;font-weight:normal;color:#aaa;">version {{ version }}</span></header>
@@ -1786,8 +1821,8 @@ def basculer_option():
 def changer_mode():
     if not admin_required():
         return redirect(url_for("login"))
-    mode = request.form.get("mode", "TICKETS")
-    if mode in ("TICKETS", "ARGENT"):
+    mode = request.form.get("mode", "JETONS")
+    if mode in ("JETONS", "ARGENT"):
         set_param("mode", mode)
         save_panier([])
     return redirect(url_for("config"))
@@ -1800,19 +1835,14 @@ def articles():
     if request.method == "POST":
         conn.execute("DELETE FROM articles")
         noms = request.form.getlist("nom")
-        prixs = request.form.getlist("prix")
         prix_euros = request.form.getlist("prix_euro")
         categories = request.form.getlist("categorie")
         couleurs = request.form.getlist("couleur")
         rouges = request.form.getlist("jetons_rouges")
         bleus = request.form.getlist("jetons_bleus")
-        for nom, prix, prix_e, categorie, couleur, r, b in zip(noms, prixs, prix_euros, categories, couleurs, rouges, bleus):
+        for nom, prix_e, categorie, couleur, r, b in zip(noms, prix_euros, categories, couleurs, rouges, bleus):
             nom = nom.strip()
             if nom:
-                try:
-                    prix_int = int(float(str(prix).replace(",", ".")))
-                except ValueError:
-                    prix_int = 0
                 try:
                     r_int = int(r)
                 except ValueError:
@@ -1824,7 +1854,7 @@ def articles():
                 conn.execute("""
                     INSERT INTO articles (nom, prix, categorie, couleur, jetons_rouges, jetons_bleus, prix_euro)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (nom, prix_int, categorie.strip() or "Divers", couleur.strip() or "#2d89ef", r_int, b_int, parse_euros(prix_e)))
+                """, (nom, r_int + b_int, categorie.strip() or "Divers", couleur.strip() or "#2d89ef", r_int, b_int, parse_euros(prix_e)))
         conn.commit()
         conn.close()
         return redirect(url_for("articles"))
@@ -1834,13 +1864,13 @@ def articles():
     {{ style|safe }}
     <header>ARTICLES</header>
     <form method="post" style="padding:20px;">
-        <p style="color:#aaa;">Pour supprimer un article : effacer sa description puis Sauver.</p>
+        <p style="color:#aaa;">Pour supprimer un article : effacer sa description puis Sauver.<br>
+        En mode JETONS, le prix d'un article est le nombre de jetons 🔴 rouges et 🔵 bleus.</p>
         <table id="table">
-            <tr><th>Description</th><th>Tickets</th><th>Prix €</th><th>🔴 Rouges</th><th>🔵 Bleus</th><th>Catégorie</th><th>Couleur</th></tr>
+            <tr><th>Description</th><th>Prix €</th><th>🔴 Rouges</th><th>🔵 Bleus</th><th>Catégorie</th><th>Couleur</th></tr>
             {% for a in rows %}
             <tr>
                 <td><input name="nom" value="{{ a.nom }}"></td>
-                <td><input style="width:80px;" name="prix" value="{{ a.prix }}"></td>
                 <td><input style="width:110px;" name="prix_euro" inputmode="decimal" value="{{ a.prix_euro|euros_input }}"></td>
                 <td><input style="width:80px; color:#ff4d4d;" type="number" name="jetons_rouges" value="{{ a.jetons_rouges }}"></td>
                 <td><input style="width:80px; color:#3399ff;" type="number" name="jetons_bleus" value="{{ a.jetons_bleus }}"></td>
@@ -1858,7 +1888,6 @@ def articles():
         let table = document.getElementById("table");
         let row = table.insertRow(-1);
         row.innerHTML = '<td><input name="nom" value="Nouvel article"></td>' +
-                        '<td><input style="width:80px;" name="prix" value="1"></td>' +
                         '<td><input style="width:110px;" name="prix_euro" inputmode="decimal" value="0,00"></td>' +
                         '<td><input style="width:80px; color:#ff4d4d;" type="number" name="jetons_rouges" value="0"></td>' +
                         '<td><input style="width:80px; color:#3399ff;" type="number" name="jetons_bleus" value="0"></td>' +
@@ -1873,7 +1902,12 @@ def ventes():
     if not admin_required():
         return redirect(url_for("login"))
     conn = db()
-    rows = conn.execute("SELECT * FROM ventes ORDER BY id DESC").fetchall()
+    rows = conn.execute("""
+        SELECT v.*,
+               (SELECT COALESCE(SUM(jetons_rouges * quantite), 0) FROM lignes_vente WHERE vente_id = v.id) AS rouges,
+               (SELECT COALESCE(SUM(jetons_bleus * quantite), 0) FROM lignes_vente WHERE vente_id = v.id) AS bleus
+        FROM ventes v ORDER BY v.id DESC
+    """).fetchall()
     conn.close()
     return render_template_string("""
     {{ style|safe }}
@@ -1883,7 +1917,7 @@ def ventes():
             <tr><th>ID</th><th>Date</th><th>Total</th><th>Paiement</th><th>Rendu</th><th>Statut</th><th>Actions</th></tr>
             {% for v in rows %}
             <tr>
-                <td>{{ v.id }}</td><td>{{ v.date }}</td><td>{{ v.total|montant(v.mode) }}</td><td>{{ v.paiement }}</td>
+                <td>{{ v.id }}</td><td>{{ v.date }}</td><td>{{ v.total|montant(v.mode, v.rouges, v.bleus) }}</td><td>{{ v.paiement }}</td>
                 <td>{% if v.paiement == 'ESPECES' %}{{ v.rendu|montant('ARGENT') }}{% endif %}</td>
                 <td>{% if v.annulee %}<span style="color:red;">Annulée</span>{% else %}OK{% endif %}</td>
                 <td><a class="btn blue" href="/ticket/{{ v.id }}">Ticket</a>{% if not v.annulee %}<a class="btn red" href="/annuler_vente/{{ v.id }}" onclick="return confirm('Annuler cette vente ?');">Annuler</a>{% endif %}</td>
@@ -1933,7 +1967,7 @@ def recap():
             <tr><th>Mode</th><th>Article</th><th>Quantité</th><th>Total</th><th>🔴 Rouges</th><th>🔵 Bleus</th></tr>
             {% for a in r.articles %}
             <tr>
-                <td>{{ a.mode }}</td><td>{{ a.article }}</td><td>{{ a.quantite }}</td><td>{{ a.total|montant(a.mode) }}</td>
+                <td>{{ a.mode }}</td><td>{{ a.article }}</td><td>{{ a.quantite }}</td><td>{{ a.total|montant(a.mode, a.rouges, a.bleus) }}</td>
                 <td class="jeton-r">{{ a.rouges }}</td><td class="jeton-b">{{ a.bleus }}</td>
             </tr>
             {% endfor %}
@@ -1951,7 +1985,7 @@ def stats():
     <div style="padding:20px;">
         <div style="display:flex; flex-wrap:wrap;">
             {% for m in r.par_mode %}
-            <div class="card" style="flex:1;"><h2>Total {{ m.mode|lower }}</h2><div class="big-number">{{ m.total|montant(m.mode) }}</div><div>{{ m.nb }} vente{% if m.nb > 1 %}s{% endif %}</div></div>
+            <div class="card" style="flex:1;"><h2>Total {{ m.mode|lower }}</h2><div class="big-number">{{ m.total|montant(m.mode, m.rouges, m.bleus) }}</div><div>{{ m.nb }} vente{% if m.nb > 1 %}s{% endif %}</div></div>
             {% else %}
             <div class="card" style="flex:1;"><h2>Aucune vente</h2></div>
             {% endfor %}
@@ -1962,7 +1996,7 @@ def stats():
         <div class="card"><h2>Article le plus vendu</h2>{% if r.top %}<div class="big-number">{{ r.top.article }} x{{ r.top.qte }}</div>{% else %}<div>Aucune vente</div>{% endif %}</div>
         <div class="card"><h2>Par type de paiement</h2>
             <table><tr><th>Mode</th><th>Paiement</th><th>Nombre</th><th>Total</th></tr>
-            {% for p in r.par_paiement %}<tr><td>{{ p.mode }}</td><td>{{ p.paiement }}</td><td>{{ p.nb }}</td><td>{{ p.total|montant(p.mode) }}</td></tr>{% endfor %}
+            {% for p in r.par_paiement %}<tr><td>{{ p.mode }}</td><td>{{ p.paiement }}</td><td>{{ p.nb }}</td><td>{{ p.total|montant(p.mode, p.rouges, p.bleus) }}</td></tr>{% endfor %}
             </table>
         </div>
         <a class="btn gray" href="/config">Retour</a>
@@ -1999,7 +2033,7 @@ def fin_service():
         <div class="card">
             <h2>Résumé financier & Jetons</h2>
             {% for m in r.par_mode %}
-            <div class="big-number">{{ m.total|montant(m.mode) }}</div>
+            <div class="big-number">{{ m.total|montant(m.mode, m.rouges, m.bleus) }}</div>
             <div style="font-size:22px;margin-bottom:10px;">Mode {{ m.mode }} — {{ m.nb }} vente{% if m.nb > 1 %}s{% endif %}</div>
             {% else %}
             <h2>Aucune vente</h2>
@@ -2020,7 +2054,7 @@ def fin_service():
                 <tr><th>Mode</th><th>Article</th><th>Quantité</th><th>Total</th><th>🔴 R</th><th>🔵 B</th></tr>
                 {% for a in r.articles %}
                 <tr>
-                    <td>{{ a.mode }}</td><td>{{ a.article }}</td><td>{{ a.quantite }}</td><td>{{ a.total|montant(a.mode) }}</td>
+                    <td>{{ a.mode }}</td><td>{{ a.article }}</td><td>{{ a.quantite }}</td><td>{{ a.total|montant(a.mode, a.rouges, a.bleus) }}</td>
                     <td class="jeton-r">{{ a.rouges }}</td><td class="jeton-b">{{ a.bleus }}</td>
                 </tr>
                 {% endfor %}

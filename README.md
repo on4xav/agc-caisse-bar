@@ -4,8 +4,8 @@ Caisse tactile (Flask) pour le bar des concours de tir, prévue pour un POS Posi
 
 ## Fonctions
 
-- **Mode tickets** ou **mode argent**, au choix dans la configuration
-- Jetons rouges / bleus à remettre, affichés pour chaque article et chaque vente
+- **Mode jetons** (le client paie en jetons 🔴 rouges et 🔵 bleus) ou **mode argent**, au choix dans la configuration
+- En mode argent : jetons rouges / bleus à remettre, affichés pour chaque article et chaque vente
 - Gros boutons **Valider** / **Vider** (double appui pour vider), validation directe sans écran intermédiaire
 - Mode argent : compte juste, billets 5/10/20/50 €, carte et Payconiq (activables), montant à rendre affiché au centre de l'écran
 - **Fond de caisse** et montant d'espèces attendu, avec calcul de l'écart en fin de journée
